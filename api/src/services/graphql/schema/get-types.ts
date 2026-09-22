@@ -92,12 +92,17 @@ export function getTypes(
 
 					const fieldIsInconsistent = inconsistentFields[action][collection.collection]?.includes(field.field);
 
-					// GraphQL doesn't differentiate between not-null and has-to-be-submitted. We
-					// can't non-null in update, as that would require every not-nullable field to be
-					// submitted on updates
+					// GraphQL doesn't differentiate between "required" and "non-null".
+					// Only mark a field as non-null when a value is guaranteed:
+					// - update: always optional, otherwise every not-null field would have to be submitted
+					// - create: optional when the column has a default
+					// - read: non-null whenever the column is non-null, regardless of defaults
+					// Generated fields and fields that item permissions can hide stay nullable (primary keys are handled below)
+					const defaultAllowsOmit = action === 'create' && Boolean(field.defaultValue);
+
 					if (
 						field.nullable === false &&
-						!field.defaultValue &&
+						!defaultAllowsOmit &&
 						!GENERATE_SPECIAL.some((flag) => field.special.includes(flag)) &&
 						fieldIsInconsistent === false &&
 						action !== 'update'

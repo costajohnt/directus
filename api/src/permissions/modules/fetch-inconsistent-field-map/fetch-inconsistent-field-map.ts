@@ -34,9 +34,15 @@ export async function fetchInconsistentFieldMap(
 	const collections = uniq(permissions.map(({ collection }) => collection));
 
 	for (const collection of collections) {
+		// Expand '*' so a field granted through a wildcard in one permission but missing
+		// from another is still reported as inconsistent
 		const fields: string[][] = permissions
 			.filter((permission) => permission.collection === collection)
-			.map((permission) => permission.fields ?? []);
+			.map((permission) =>
+				permission.fields?.includes('*')
+					? Object.keys(schema.collections[collection]?.fields ?? {})
+					: (permission.fields ?? []),
+			);
 
 		const availableEverywhere = intersection(...fields);
 		const availableSomewhere = difference(uniq(fields.flat()), availableEverywhere);

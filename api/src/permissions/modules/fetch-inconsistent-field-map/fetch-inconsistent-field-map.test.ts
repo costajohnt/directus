@@ -70,3 +70,46 @@ test('Returns field map from permissions for given accountability', async () => 
 		'collection-c': ['field-a'],
 	});
 });
+
+test('Expands wildcard permissions to the collection fields', async () => {
+	const accountability = {
+		admin: false,
+	} as Accountability;
+
+	const action = 'read';
+
+	const schema = new SchemaBuilder()
+		.collection('collection-a', (c) => {
+			c.field('field-a').id();
+			c.field('field-b').string();
+			c.field('field-c').string();
+		})
+		.collection('collection-b', (c) => {
+			c.field('field-a').id();
+			c.field('field-b').string();
+		})
+		.collection('collection-c', (c) => {
+			c.field('field-a').id();
+			c.field('field-b').string();
+		})
+		.build();
+
+	vi.mocked(fetchPolicies).mockResolvedValue([]);
+
+	vi.mocked(fetchPermissions).mockResolvedValue([
+		{ collection: 'collection-a', fields: ['*'] },
+		{ collection: 'collection-a', fields: ['field-a', 'field-b'] },
+		{ collection: 'collection-b', fields: ['*'] },
+		{ collection: 'collection-b', fields: ['*'] },
+		{ collection: 'collection-c', fields: ['*', 'field-a'] },
+		{ collection: 'collection-c', fields: ['field-a'] },
+	] as Permission[]);
+
+	const map = await fetchInconsistentFieldMap({ accountability, action }, { schema } as Context);
+
+	expect(map).toEqual({
+		'collection-a': ['field-c'],
+		'collection-b': [],
+		'collection-c': ['field-b'],
+	});
+});

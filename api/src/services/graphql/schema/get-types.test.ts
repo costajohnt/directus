@@ -1,3 +1,4 @@
+import { GraphQLNonNull } from 'graphql';
 // eslint-disable-next-line import/order
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -58,13 +59,13 @@ function makeSchemaComposer() {
 	};
 }
 
-function makeSchema(action: 'read' | 'create', collections: Record<string, any>) {
+function makeSchema(action: 'read' | 'create' | 'update', collections: Record<string, any>) {
 	const empty = { collections: {}, relations: [] };
 
 	return {
 		read: action === 'read' ? { collections, relations: [] } : empty,
 		create: action === 'create' ? { collections, relations: [] } : empty,
-		update: empty,
+		update: action === 'update' ? { collections, relations: [] } : empty,
 		delete: empty,
 	};
 }
@@ -207,5 +208,90 @@ describe('getTypes – json() inside {field}_func (Phase 3)', () => {
 		const { CollectionTypes } = getTypes(sc as any, 'items', schema as any, mockInconsistentFields, 'create');
 
 		expect(CollectionTypes['articles']!.getFields()).not.toHaveProperty('metadata_func');
+	});
+});
+
+describe('getTypes – non-null fields with a default value', () => {
+	let sc: ReturnType<typeof makeSchemaComposer>;
+
+	beforeEach(() => {
+		sc = makeSchemaComposer();
+	});
+
+	function getTypesFor(
+		action: 'read' | 'create' | 'update',
+		size: Record<string, any>,
+		{
+			inconsistent = [],
+			collection = 'blocks',
+			id = {},
+		}: { inconsistent?: string[]; collection?: string; id?: Record<string, any> } = {},
+	) {
+		const schema = makeSchema(action, {
+			[collection]: makeCollection(collection, {
+				id: { ...makeField('id', 'integer'), nullable: false, ...id },
+				size: { ...makeField('size', 'string'), ...size },
+			}),
+		});
+
+		// Without an entry for the collection, fieldIsInconsistent is undefined and no field is ever non-null
+		const inconsistentFields = { ...mockInconsistentFields, [action]: { [collection]: inconsistent } };
+
+		const { CollectionTypes } = getTypes(sc as any, 'items', schema as any, inconsistentFields, action);
+
+		return CollectionTypes[collection]!.getFields();
+	}
+
+	function getSizeType(action: 'read' | 'create' | 'update', size: Record<string, any>) {
+		return getTypesFor(action, size)['size']!.type;
+	}
+
+	test('read marks a non-null field with a default as non-null', () => {
+		expect(getSizeType('read', { nullable: false, defaultValue: 'small' })).toBeInstanceOf(GraphQLNonNull);
+	});
+
+	test('create keeps a non-null field with a default optional', () => {
+		expect(getSizeType('create', { nullable: false, defaultValue: 'small' })).not.toBeInstanceOf(GraphQLNonNull);
+	});
+
+	test('read and create mark a non-null field without a default as non-null', () => {
+		expect(getSizeType('read', { nullable: false })).toBeInstanceOf(GraphQLNonNull);
+		expect(getSizeType('create', { nullable: false })).toBeInstanceOf(GraphQLNonNull);
+	});
+
+	test('update keeps non-null fields optional', () => {
+		expect(getSizeType('update', { nullable: false, defaultValue: 'small' })).not.toBeInstanceOf(GraphQLNonNull);
+		expect(getSizeType('update', { nullable: false })).not.toBeInstanceOf(GraphQLNonNull);
+	});
+
+	test('read keeps a nullable field with a default nullable', () => {
+		expect(getSizeType('read', { nullable: true, defaultValue: 'small' })).not.toBeInstanceOf(GraphQLNonNull);
+	});
+
+	test('read keeps a non-null field with a default nullable when permissions can hide it', () => {
+		const fields = getTypesFor('read', { nullable: false, defaultValue: 'small' }, { inconsistent: ['size'] });
+
+		expect(fields['size']!.type).not.toBeInstanceOf(GraphQLNonNull);
+	});
+
+	test('generated fields stay optional on create and nullable on read', () => {
+		const size = { nullable: false, special: ['date-created'] };
+
+		expect(getSizeType('create', size)).not.toBeInstanceOf(GraphQLNonNull);
+		expect(getSizeType('read', size)).not.toBeInstanceOf(GraphQLNonNull);
+	});
+
+	test('primary key is non-null on read, and optional on create when generated', () => {
+		expect(getTypesFor('read', {})['id']!.type).toBeInstanceOf(GraphQLNonNull);
+		expect(getTypesFor('create', {})['id']!.type).toBeInstanceOf(GraphQLNonNull);
+		expect(getTypesFor('create', {}, { id: { special: ['uuid'] } })['id']!.type).not.toBeInstanceOf(GraphQLNonNull);
+		expect(getTypesFor('update', {})['id']!.type).not.toBeInstanceOf(GraphQLNonNull);
+		expect(getTypesFor('read', {}, { inconsistent: ['id'] })['id']!.type).not.toBeInstanceOf(GraphQLNonNull);
+	});
+
+	test('directus_permissions primary key stays nullable', () => {
+		expect(getTypesFor('read', {}, { collection: 'directus_permissions' })['id']!.type).not.toBeInstanceOf(
+			GraphQLNonNull,
+		);
 	});
 });
